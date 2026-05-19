@@ -73,10 +73,8 @@ int pac_strip_context(ckpt_context_t *ctx)
                 u64 prev_pacibsp        = lr;
                 u64 const_pacia         = lr;
 
-                if (PTRAUTH_SIGNED(uctx_sp))
-                        XPACD(uctx_sp);
-                else if (PTRAUTH_SIGNED(prev_sp))
-                        XPACD(prev_sp);
+                XPACD(uctx_sp);
+                XPACD(prev_sp);
                 
                 PACIB(getcontext_pacibsp, uctx_sp);
                 PACIB(prev_pacibsp, prev_sp);
