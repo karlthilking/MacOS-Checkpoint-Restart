@@ -128,11 +128,11 @@ printf(
 "***************** Checkpointed Virtual Memory Regions ******************\n"
 );
         for (rgn = regions; rgn < regions + nr_regions; rgn++) {
-                printf("Memory Region %d:\n"
-                       " start=%p\n"
-                       "   end=%p\n"
-                       "  size=%zu\n"
-                       "  prot=%s/%s\n",
+                printf("Memory Region #%d:\n"
+                       "    start=%p\n"
+                       "      end=%p\n"
+                       "     size=%zu\n"
+                       "     prot=%s/%s\n",
                        (int)(rgn - regions),
                        rgn->start, rgn->end, rgn->size,
                        VM_PROT_STRING(rgn->prot),
@@ -152,14 +152,23 @@ printf(
 
         for (ctx = contexts; ctx < contexts + nr_contexts; ctx++) {
                 ctx->uc.uc_mcontext = &ctx->uc.__mcontext_data;
-                printf("Thread Context %d:\n", (int)(ctx - contexts));
-                for (u32 i = 0; i < ARM_THREAD_STATE64_GPREGCOUNT; i++) {
-                        printf(" x%u:\t0x%llx\n", 
+                printf("Thread Context #%d:\n", (int)(ctx - contexts));
+                
+                /* General purpose registers */
+                for (u32 i = 19; i <= 28; i++) {
+                        printf("\tx%u:\t0x%llx\n", 
                                i, ctx->uc.uc_mcontext->__ss.__x[i]);
                 }
-                printf(" fp:\t0x%llx\n", get_ucontext_fp(&ctx->uc));
-                printf(" lr:\t0x%llx\n", get_ucontext_lr(&ctx->uc));
-                printf(" sp:\t0x%llx\n", get_ucontext_sp(&ctx->uc));
+
+                /* FP/Vector registers */
+                for (u32 i = 8; i <= 15; i++) {
+                        printf("\td%u:\t0x%llx\n",
+                               i, (u64)ctx->uc.uc_mcontext->__ns.__v[i]);
+                }
+
+                printf("\tfp:\t0x%llx\n", get_ucontext_fp(&ctx->uc));
+                printf("\tlr:\t0x%llx\n", get_ucontext_lr(&ctx->uc));
+                printf("\tsp:\t0x%llx\n", get_ucontext_sp(&ctx->uc));
         }
 
 printf(
@@ -180,11 +189,11 @@ printf(
         for (cf = frames; cf < frames + nr_callframes; cf++) {
                 mod     = arm64_register_string(FRAME_PAC_MODIFIER(cf));
                 key     = pac_key_string(FRAME_PAC_KEY(cf));
-                printf("Call Frame %d:\n"
-                       "       fp=0x%llx\n"
-                       "       lr=0x%llx\n"
-                       "      key=%s\n"
-                       " modifier=%s\n",
+                printf("Call Frame #%d:\n"
+                       "          fp=0x%llx\n"
+                       "          lr=0x%llx\n"
+                       "         key=%s\n"
+                       "    modifier=%s\n",
                        (int)(cf - frames), cf->fp, cf->lr, key, mod);
                 free(mod);
         }
