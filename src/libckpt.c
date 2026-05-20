@@ -23,14 +23,13 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
         ckpt_context_t          ctx;
         ckpt_metadata_t         meta;
         u64                     *fp;
-        ucontext_t              uc;
         static int              restart;
         
         meta.nr_headers = 0;
         restart         = 0;
         
-        if (getcontext(&uc) < 0)
-                err(EXIT_FAILURE, "%s: getcontext", __FILE__);
+        if (getcontext(&ctx.uc) < 0)
+                err(EXIT_FAILURE, "getcontext");
         
         if (restart) {
                 restart         = 0;
@@ -45,7 +44,7 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                  */
                 pac_patch_ucontext(ucp);
                 if (setcontext(ucp) < 0)
-                        err(EXIT_FAILURE, "%s: setcontext", __FILE__);
+                        err(EXIT_FAILURE, "setcontext");
         }
 
         restart = 1;
@@ -62,8 +61,6 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
          * values to save information about how pointer values
          * in registers were signed.
          */
-        ucontext_memcpy(&ctx.uc, (ucontext_t *)&uc);
-        
         ctx.bitmap                      = 0;
         meta.nr_contexts                = 1;
         headers[meta.nr_headers++]      = CKPT_CONTEXT_HEADER;
@@ -73,6 +70,7 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                  * Abort the checkpoint, without pac signing information
                  * a restore can not occur properly.
                  */
+                fprintf(stderr, "Aborting checkpoint...\n");
                 return;
         }
 
@@ -87,14 +85,13 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                 headers[meta.nr_headers++] = CKPT_CALLFRAME_HEADER;
         
         if (write_ckpt(&meta, headers, regions, &ctx, frames) < 0) {
-                fprintf(stderr, "%s: Failed to write checkpoint file "
-                                "(%d-ckpt.dat)\n", __FILE__, getpid());
+                fprintf(stderr, "Failed to write checkpoint file "
+                                "(%d-ckpt.dat)\n", getpid());
         } else {
                 printf("Checkpoint written to %d-ckpt.dat\n", getpid());
         }
 
         pac_sign_frames(frames, fp, meta.nr_callframes);
-        pac_sign_context(&ctx);
         return;
 }
 
