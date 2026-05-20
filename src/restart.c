@@ -10,6 +10,7 @@
 #include "types.h"
 #include "pac.h"
 #include "vm_region.h"
+#include "shared_cache.h"
 
 __attribute__((noreturn))
 void restart(int fd, int depth)
@@ -23,9 +24,10 @@ void restart(int fd, int depth)
                 retval = ckpt_vm_regions_mark(VM_INHERIT_NONE,
                                               VM_BEHAVIOR_DONTNEED);
 
-                if (retval < 0 || readall(fd, &meta, sizeof(meta)) < 0)
+                if (retval < 0 || readall(fd, &meta, sizeof(meta)) < 0
+                    shared_cache_check(&meta.shared_cache_info) < 0)
                         exit(EXIT_FAILURE);
-                
+
                 ckpt_header_t           headers[meta.nr_headers];
                 ckpt_vm_region_t        regions[meta.nr_regions];
                 ckpt_context_t          contexts[meta.nr_contexts];
@@ -41,6 +43,8 @@ void restart(int fd, int depth)
                                 "aborting restart...\n");
                         abort();
                 }
+
+
 
                 u64 *fp = (u64 *)get_ucontext_fp(&contexts[0].uc);
                 pac_sign_frames(frames, fp, meta.nr_callframes);

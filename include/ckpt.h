@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <ucontext.h>
+#include "shared_cache.h"
 #include "types.h"
 
 /**
@@ -15,10 +16,11 @@
  *                  reading the checkpoint image
  */
 typedef struct ckpt_metadata {
-        u32             nr_headers;
-        u32             nr_regions;
-        u32             nr_contexts;
-        u32             nr_callframes;
+        u32                     nr_headers;
+        u32                     nr_regions;
+        u32                     nr_contexts;
+        u32                     nr_callframes;
+        shared_cache_info_t     shared_cache_info;
 } ckpt_metadata_t;
 
 /** 

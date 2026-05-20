@@ -8,10 +8,10 @@ INCLUDE := ./include
 
 LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_region.c \
                    $(SRC)/writeckpt.c $(SRC)/time_wrappers.c \
-                   $(SRC)/readckpt.c
+                   $(SRC)/readckpt.c $(SRC)/shared_cache.c
 
 RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_region.c \
-                   $(SRC)/readckpt.c
+                   $(SRC)/readckpt.c $(SRC)/shared_cache.c
 
 BINARIES        := ckpt printckpt rand count new
 ALL             := $(BINARIES) restart libckpt.dylib

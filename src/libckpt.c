@@ -49,6 +49,15 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
 
         restart = 1;
 
+        /* Save shared cache information to checkpoint metadata */
+        if (shared_cache_get_info(&meta.shared_cache_info) < 0) {
+                fprintf(stderr, 
+                        "Failed to get shared cache info, "
+                        "aborting checkpoint...\n");
+                return;
+        }
+                
+
         /* Enumerate and save memory regions */
         meta.nr_regions = ckpt_vm_regions_save(regions);
         meta.nr_headers += meta.nr_regions;
