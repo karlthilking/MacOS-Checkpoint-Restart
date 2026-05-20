@@ -13,7 +13,7 @@ LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_region.c \
 RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_region.c \
                    $(SRC)/readckpt.c
 
-BINARIES        := ckpt printckpt rand count
+BINARIES        := ckpt printckpt rand count new
 ALL             := $(BINARIES) restart libckpt.dylib
 
 build: $(ALL)
@@ -33,6 +33,9 @@ restart: $(RESTART_SOURCES)
 
 %: $(TEST)/%.c
 	$(CC) $(CFLAGS) -o $@ $<
+
+%: $(TEST)/%.cpp
+	clang++ -std=c++20 $(CFLAGS) -o $@ $<
 
 clean:
 	rm -f $(ALL)
