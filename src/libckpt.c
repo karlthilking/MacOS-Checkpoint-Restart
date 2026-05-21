@@ -24,6 +24,7 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
         ckpt_metadata_t         meta;
         u64                     *fp;
         static int              restart;
+        static uintptr_t        tls;
         
         meta.nr_headers = 0;
         restart         = 0;
@@ -32,6 +33,17 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                 err(EXIT_FAILURE, "getcontext");
         
         if (restart) {
+                uintptr_t check;
+                
+                asm volatile("mrs %0, tpidrro_el0" : "=r" (check));
+                if (check != tls) {
+                        fprintf(stderr,
+                                " tpiddro_el0 before checkpoint: 0x%lx\n"
+                                "        tpidrro_el0 in restart: 0x%lx\n",
+                                tls, check);
+                        __builtin_trap();
+                }
+
                 restart         = 0;
                 ucontext_t *ucp = (ucontext_t *)uctx;
                 
@@ -46,7 +58,8 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                 if (setcontext(ucp) < 0)
                         err(EXIT_FAILURE, "setcontext");
         }
-
+        
+        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls));
         restart = 1;
 
         /* Save shared cache information to checkpoint metadata */
