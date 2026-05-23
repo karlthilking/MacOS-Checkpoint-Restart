@@ -33,7 +33,8 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                 err(EXIT_FAILURE, "getcontext");
         
         if (restart) {
-                uintptr_t check;
+                ucontext_t      *ucp;
+                uintptr_t       check;
                 
                 asm volatile("mrs %0, tpidrro_el0" : "=r" (check));
                 if (check != tls) {
@@ -44,9 +45,10 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                         __builtin_trap();
                 }
 
-                restart         = 0;
-                ucontext_t *ucp = (ucontext_t *)uctx;
+                restart = 0;
+                ucp     = (ucontext_t *)uctx;
                 
+                ckpt_vm_deallocate_regions();
                 /* Re-initialize signal handler for SIGUSR2 */
                 setup();
 
@@ -72,7 +74,7 @@ void ckpt_handler(int sig, siginfo_t *_, void *uctx)
                 
 
         /* Enumerate and save memory regions */
-        meta.nr_regions = ckpt_vm_regions_save(regions);
+        meta.nr_regions = ckpt_vm_save_regions(regions);
         meta.nr_headers += meta.nr_regions;
         for (u32 i = 0; i < meta.nr_regions; i++)
                 headers[i] = CKPT_VM_REGION_HEADER;

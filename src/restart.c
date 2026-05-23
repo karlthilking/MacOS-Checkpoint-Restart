@@ -21,9 +21,7 @@ void restart(int fd)
         u64                     *fp;
         ckpt_metadata_t         meta;
 
-        retval = ckpt_vm_regions_mark(VM_INHERIT_NONE,
-                                      VM_BEHAVIOR_DONTNEED);
-
+        retval = ckpt_vm_mark_regions();
         if (retval < 0 || readall(fd, &meta, sizeof(meta)) < 0 ||
             shared_cache_check(&meta.shared_cache_info) < 0)
                 exit(EXIT_FAILURE);
@@ -52,26 +50,44 @@ void restart(int fd)
         abort();
 }
 
+/**
+ * jump:
+ *  Jump to a temporary stack and initiate the restart.
+ */
 __attribute__((noreturn))
 void jump(int fd)
 {
-        void            *stack, *sp;
-        const size_t    stksz = 1024 * 1024;
-
-        stack = mmap(NULL, stksz, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANON | VM_FLAGS_PURGABLE, -1, 0);
-        if (stack == MAP_FAILED) {
-                perror("mmap");
-                __builtin_trap();
-        }
+        int                     flags;
+        kern_return_t           ret;
+        void                    *sp;
+        mach_vm_address_t       addr;
+        const mach_vm_size_t    size = 1024 * 1024; // 1 MB
         
-        sp = (void *)(((u64)stack + stksz) & ~0xf);
+        /**
+         * Make VM object purgable and associate VM_REGION_RESTART_STACK
+         * user_tag with mapping s.t. memory region checkpoint path
+         * will know to discard this region.
+         */
+        flags = VM_FLAGS_PURGABLE | VM_FLAGS_ANYWHERE |
+                VM_MAKE_TAG(VM_MEMORY_RESTART_STACK);
+
+        ret = mach_vm_map(mach_task_self(), &addr, size, 0, flags,
+                          MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
+                          VM_PROT_ALL, VM_INHERIT_NONE);
+
+        if (ret != KERN_SUCCESS)
+                errx(EXIT_FAILURE, "mach_vm_map: %s\n",
+                     mach_error_string(ret));
+        
+        /* New stack pointer */
+        sp = (void *)((addr + size) & ~0xF);
         
         /* Switch to temporary stack and call restart function */
         asm volatile(
-                "mov sp, %[sp]          \n"
-                "mov x0, %[fildes]      \n"
+                "mov    sp, %[sp]       \n"
+                "mov    x0, %[fildes]   \n"
                 "blraaz %[restart]      \n"
+                "blr    %[restart]      \n"
                 :
                 : [sp] "r" (sp), [fildes] "r" ((long)fd),
                   [restart] "r" (restart)

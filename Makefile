@@ -6,15 +6,17 @@ SRC     := ./src
 TEST    := ./test
 INCLUDE := ./include
 
-LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_region.c \
-                   $(SRC)/writeckpt.c $(SRC)/time_wrappers.c \
-                   $(SRC)/readckpt.c $(SRC)/shared_cache.c \
+LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_common.c \
+                   $(SRC)/vm_checkpoint.c $(SRC)/writeckpt.c \
+                   $(SRC)/time_wrappers.c $(SRC)/shared_cache.c \
                    $(SRC)/exit_wrappers.c
 
-RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_region.c \
-                   $(SRC)/readckpt.c $(SRC)/shared_cache.c
+RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_common.c \
+                   $(SRC)/vm_restore.c $(SRC)/readckpt.c \
+                   $(SRC)/shared_cache.c
 
-BINARIES        := ckpt printckpt rand count new
+TESTS           := count 
+BINARIES        := ckpt printckpt $(TESTS)
 ALL             := $(BINARIES) restart libckpt.dylib
 
 build: $(ALL)
@@ -22,12 +24,15 @@ build: $(ALL)
 libckpt.dylib: $(LIBCKPT_SOURCES)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -dynamiclib -fPIC -o $@ $^
 
-TEXT_ADDR := 0x300000000
-DATA_ADDR := 0x300004000
+__TEXT          := 0x300000000
+__DATA          := 0x300004000
+__LINKEDIT      := 0x300008000
 restart: $(RESTART_SOURCES)
-	$(CC) $(CFLAGS) -I$(INCLUDE) \
-	-Wl,-segaddr,__TEXT,$(TEXT_ADDR) \
-	-Wl,-segaddr,__DATA,$(DATA_ADDR) -o $@ $^
+	$(CC) $(CFLAGS) -I$(INCLUDE)  		\
+	-Wl,-segaddr,__TEXT,$(__TEXT) 		\
+	-Wl,-segaddr,__DATA,$(__DATA) 		\
+	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) 	\
+	-o $@ $^
 
 %: $(SRC)/%.c
 	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $<
