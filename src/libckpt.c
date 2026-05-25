@@ -13,8 +13,23 @@
 #include "vm_region.h"
 #include "pac.h"
 #include "pthread_wrappers.h"
+#include "file_wrappers.h"
 
 extern uintptr_t __stack_chk_guard;
+
+void precheckpoint(void)
+{
+        save_file_offsets();
+}
+
+void postrestart(void)
+{
+        ckpt_vm_deallocate_regions();
+        pthread_fixup();
+        setup();
+        reopen_files();
+}
+
 
 void ckpt_handler(int sig, siginfo_t *info, void *uctx)
 {
@@ -24,6 +39,7 @@ void ckpt_handler(int sig, siginfo_t *info, void *uctx)
         ckpt_metadata_t         meta;
         static int              restart;
         static uintptr_t        tls;
+
         
         bzero(&meta, sizeof(meta));
         restart = 0;
@@ -46,10 +62,7 @@ void ckpt_handler(int sig, siginfo_t *info, void *uctx)
                 restart = 0;
                 prevctx = (ckpt_context_t *)uctx;
                 
-                ckpt_vm_deallocate_regions();
-                pthread_fixup();
-                /* Re-initialize signal handler for SIGUSR2 */
-                setup();
+                postrestart();
 
                 /**
                  * On restart, return from signal handler via setcontext

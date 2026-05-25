@@ -57,10 +57,9 @@ void restart(int fd)
 __attribute__((noreturn))
 void jump(int fd)
 {
-        int                     flags;
         kern_return_t           ret;
         void                    *sp;
-        mach_vm_address_t       addr;
+        mach_vm_address_t       addr = 0x320000000;
         const mach_vm_size_t    size = 1024 * 1024; // 1 MB
         
         /**
@@ -68,10 +67,9 @@ void jump(int fd)
          * user_tag with mapping s.t. memory region checkpoint path
          * will know to discard this region.
          */
-        flags = VM_FLAGS_PURGABLE | VM_FLAGS_ANYWHERE |
-                VM_MAKE_TAG(VM_MEMORY_RESTART_STACK);
-
-        ret = mach_vm_map(mach_task_self(), &addr, size, 0, flags,
+        ret = mach_vm_map(mach_task_self(), &addr, size, 0,
+                          VM_FLAGS_FIXED | VM_FLAGS_PURGABLE |
+                          VM_MAKE_TAG(VM_MEMORY_RESTART_STACK),
                           MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
                           VM_PROT_ALL, VM_INHERIT_NONE);
 
@@ -80,7 +78,7 @@ void jump(int fd)
                      mach_error_string(ret));
         
         /* New stack pointer */
-        sp = (void *)((addr + size) & ~0xF);
+        sp = (void *)(addr + size);
         
         /* Switch to temporary stack and call restart function */
         asm volatile(
