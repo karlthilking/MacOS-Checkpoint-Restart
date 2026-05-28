@@ -22,8 +22,7 @@ void precheckpoint(void)
 #if defined(__arm64e__)
         __pthread_cookie();
 #endif
-        if (save_file_states() < 0)
-                fprintf(stderr, "Failed save file/fd state\n");
+        fd_table_save_state();
 }
 
 void postrestart(void)
@@ -33,8 +32,7 @@ void postrestart(void)
         __pthread_slot_fixup();
 #endif
         setup();
-        if (reopen_files() < 0)
-                fprintf(stderr, "Failed to restore file/fd state\n");
+        fd_table_restore_state();
 }
 
 void ckpt_handler(int sig, siginfo_t *info, void *uctx)

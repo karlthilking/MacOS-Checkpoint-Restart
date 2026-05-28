@@ -4,156 +4,243 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
+#include <errno.h>
 #include <assert.h>
+#include <unistd.h>
 #include "types.h"
 #include "file_wrappers.h"
 
-static filelist_t flist;
+static struct fd_state  fd_table[MAXFILES];
+static atomic_int       fd_table_ready = 0;
 
-__attribute__((constructor)) 
-void filelist_init(void)
+void fd_backing_save(int fd)
 {
-        flist.size      = 0;
-        flist.capacity  = 8;
-        flist.files     = malloc(sizeof(file_t) * flist.capacity);
-
-        if (flist.files == NULL)
-                perror("malloc");
-}
-
-int filelist_open(int fd, const char *path, int flags, mode_t mode)
-{
-        file_t *file;
-
-        if (flist.size == flist.capacity && filelist_resize() < 0)
-                return -1;
-
-        file = flist.files + flist.size;
-        file->fd        = fd;
-        file->path      = path;
-        file->flags     = flags;
-        file->mode      = mode;
-        file->open      = 1;
-        file->off       = 0;
+        int                     retval;
+        struct fd_state         *state;
+        struct fd_backing       *backing;
         
-        flist.size++;
-        return 0;
-}
+        state = fd_table + fd;
+        backing = state->src;
 
-int filelist_dup(int old, int new)
-{       
-        file_t *f;
+        if (FD_TYPE_INHERITED(state->type)) {
+                backing->state = FD_STATE_SAVED;
+                return;
+        }
         
-        assert(old != new);
-        for (f = flist.files; f < flist.files + flist.size; f++) {
-                if (f->fd == new && filelist_close(new) < 0)
-                        return -1;
-                else if (f->fd != old)
-                        continue;
-                assert(f->open);
-                return filelist_open(new, f->path, f->flags, f->mode);
+        /* Save current offset into open file */
+        if ((backing->off = lseek(fd, 0, SEEK_CUR)) < 0) {
+                perror("lseek");
+                backing->off = 0;
+                return;
         }
 
-        return -1;
+        if ((retval = fcntl(fd, F_GETFL)) < 0) {
+                perror("fcntl(..., F_GETFL)");
+                return;
+        } else
+                backing->flags |= (retval & (O_APPEND | O_NONBLOCK));
+
+        if ((retval = fcntl(fd, F_GETFD)) < 0) {
+                perror("fcntl(..., F_GETFD)");
+                return;
+        } else if (retval & FD_CLOEXEC)
+                backing->flags |= O_CLOEXEC;
+        else if (backing->flags & O_CLOEXEC)
+                backing->flags &= ~O_CLOEXEC;
+
+        backing->state = FD_STATE_SAVED;
 }
 
-int filelist_close(int fd)
+void fd_backing_restore(int fd)
 {
-        file_t *f;
+        int                     retval;
+        struct fd_state         *state;
+        struct fd_backing       *backing;
 
-        for (f = flist.files; f < flist.files + flist.size; f++) {
-                if (f->fd == fd) {
-                        f->open = 0;
-                        return 0;
+        state = fd_table + fd;
+        backing = state->src;
+
+        if (FD_TYPE_INHERITED(state->type)) {
+                if (fd <= 2) {
+                        /**
+                         * If actual stdin, stdout, or stderr, and not
+                         * dups there is nothing to do.
+                         */
+                        return;
                 }
-        }
 
-        return -1;
+                switch (state->type) {
+                case FD_STDIN:
+                        retval          = dup2(STDIN_FILENO, fd);
+                        backing->reopen = STDIN_FILENO;
+                        break;
+                case FD_STDOUT:
+                        retval          = dup2(STDOUT_FILENO, fd);
+                        backing->reopen = STDOUT_FILENO;
+                        break;
+                case FD_STDERR:
+                        retval          = dup2(STDERR_FILENO, fd);
+                        backing->reopen = STDERR_FILENO;
+                        break;
+                default:
+                        __builtin_trap();
+                }
+
+                if (retval < 0)
+                        perror("dup2");
+                else {
+                        assert(retval == fd);
+                        backing->state = FD_STATE_RESTORED;
+                }
+
+                return;
+        }
+        
+        /**
+         * Reopen backing file with original flags and mode
+         */
+        retval = open(backing->path, backing->flags, backing->mode);
+        if (retval < 0) {
+                perror("open");
+                return;
+        } else if (retval != fd) {
+                /* Rearrange file descriptors as they were before */
+                if (dup2(retval, fd) != fd) {
+                        perror("dup2");
+                        return;
+                }
+                close(retval);
+        }
+        
+        /* Reposition file offset */
+        if (lseek(fd, backing->off, SEEK_SET) < 0) {
+                perror("lseek");
+                return;
+        }
+        
+        /**
+         * Now other file descriptors referring to the same underlying
+         * open that need be restored can call dup2(bacing->reopen, myfd)
+         */
+        backing->reopen = fd;
+        backing->state  = FD_STATE_RESTORED;
 }
 
-int filelist_resize()
+__attribute__((constructor(101)))
+void fd_table_init(void)
 {
-        size_t  new_size;
-        size_t  new_cap;
-        file_t  *new_list;
+        bzero(&fd_table, sizeof(fd_table));
         
-        assert(flist.size == flist.capacity);
-        new_cap  = flist.capacity * 2;
-        new_list = malloc(sizeof(file_t) * new_cap);
-        
-        if (new_list == NULL) {
-                perror("malloc");
-                return -1;
-        }
-        
-        new_size = 0;
-        for (size_t i = 0; i < flist.size; i++) {
-                if (!flist.files[i].open)
-                        continue;
-                memcpy(new_list + new_size, flist.files + i,
-                       sizeof(file_t));
-                new_size++;
-        }
-        
-        free(flist.files);
-        flist.size      = new_size;
-        flist.capacity  = new_cap;
-        flist.files     = new_list;
+        /**
+         * Set up inherited file descriptors with default state
+         * information.
+         */
+        fd_table[0].type = FD_STDIN;
+        fd_table[1].type = FD_STDOUT;
+        fd_table[2].type = FD_STDERR;
 
-        return 0;
+        for (int fd = 0; fd <= 2; fd++) {
+                fd_table[fd].src = malloc(sizeof(struct fd_backing));
+                fd_table[fd].src->ref = 1;
+        }
+
+        atomic_store(&fd_table_ready, 1);
 }
 
 __attribute__((destructor))
-void filelist_destroy(void)
+void fd_table_destroy(void)
 {
-        assert(flist.files != NULL);
-        free(flist.files);
-}
+        int fd;
 
-int save_file_offsets(void)
-{
-        file_t *f;
-
-        for (f = flist.files; f < flist.files + flist.size; f++) {
-                if (!f->open)
+        for (fd = 0; fd < MAXFILES; fd++) {
+                if (fd_table[fd].src == NULL)
                         continue;
-                else if ((f->off = lseek(f->fd, 0, SEEK_CUR)) < 0) {
-                        perror("lseek");
-                        return -1;
-                }
+                fd_table[fd].src->ref--;
+                if (fd_table[fd].src->ref == 0)
+                        free(fd_table[fd].src);
         }
-
-        return 0;
 }
 
-int reopen_files(void)
+void fd_table_save_state(void)
 {
-        int     fd;
-        file_t  *f;
+        int fd;
 
-        for (f = flist.files; f < flist.files + flist.size; f++) {
-                fd = openat(AT_FDCWD, f->path, f->flags, f->mode);
-                if (fd < 0) {
-                        perror("openat");
-                        return -1;
+        for (fd = 0; fd < MAXFILES; fd++) {
+                if (fd_table[fd].type == FD_UNUSED ||
+                    fd_table[fd].src->state == FD_STATE_SAVED) {
+                        continue;
                 }
-
-                if (fd != f->fd) {
-                        if (dup2(fd, f->fd) < 0 || close(fd) < 0)
-                                return -1;
-                }
-
-                if (lseek(f->fd, f->off, SEEK_SET) < 0)
-                        return -1;
+                fd_backing_save(fd);
         }
-
-        return 0;
 }
 
-int __openat_hook(int cwd, const char *path, int flags, ...)
+void fd_table_restore_state(void)
 {
-        int     fd;
+        int fd;
+
+        for (fd = 0; fd < MAXFILES; fd++) {
+                if (fd_table[fd].type == FD_UNUSED)
+                        continue;
+                else if (fd_table[fd].src->state == FD_STATE_RESTORED) {
+                        if (dup2(fd_table[fd].src->reopen, fd) != fd)
+                                perror("dup2");
+                        continue;
+                }
+                fd_backing_restore(fd);
+        }
+}
+
+void fd_table_open(int fd, const char *path, int flags, mode_t mode)
+{
+        if (!atomic_load(&fd_table_ready))
+                return;
+
+        fd_table[fd].src        = malloc(sizeof(struct fd_backing));
+        fd_table[fd].type       = FD_REGFILE;
+        fd_table[fd].src->flags = flags;
+        fd_table[fd].src->mode  = mode;
+        fd_table[fd].src->ref   = 1;
+        fd_table[fd].src->state = FD_STATE_NONE;
+
+        strncpy(fd_table[fd].src->path, path, strlen(path) + 1);
+}
+
+void fd_table_dup(int oldfd, int newfd)
+{
+        if (!atomic_load(&fd_table_ready) || oldfd == newfd)
+                return;
+
+        assert(fd_table[oldfd].src != NULL &&
+               fd_table[oldfd].type != FD_UNUSED);
+        
+        /* newfd now points to the same underlying open file */
+        fd_table[newfd].src     = fd_table[oldfd].src;
+        fd_table[newfd].type    = fd_table[oldfd].type;
+        
+        /* Increment reference count */
+        fd_table[newfd].src->ref++;
+}
+
+void fd_table_close(int fd)
+{
+        if (!atomic_load(&fd_table_ready))
+                return;
+        
+        fd_table[fd].type = FD_UNUSED;
+        fd_table[fd].src->ref--;
+
+        if (fd_table[fd].src->ref == 0) {
+                /* Free fd backing info if last reference */
+                free(fd_table[fd].src);
+                fd_table[fd].src = NULL;
+        }
+}
+
+int __openat_hook(int dirfd, const char *path, int flags, ...)
+{
+        int     retval;
         va_list va;
         mode_t  mode = 0;
 
@@ -162,12 +249,11 @@ int __openat_hook(int cwd, const char *path, int flags, ...)
                 mode = va_arg(va, int);
                 va_end(va);
         }
-        
-        fd = openat(cwd, path, flags, mode);
-        if (fd != -1)
-                assert(filelist_open(fd, path, flags, mode) == 0);
 
-        return fd;
+        if ((retval = openat(dirfd, path, flags, mode)) != -1)
+                fd_table_open(retval, path, flags, mode);
+
+        return retval;
 }
 
 int __open_hook(const char *path, int flags, ...)
@@ -180,8 +266,23 @@ int __open_hook(const char *path, int flags, ...)
                 mode = va_arg(va, int);
                 va_end(va);
         }
-
+        
+        /**
+         * open(path, flags, mode) is equivalent to
+         * openat(AT_FDCWD, path, flags, mode)
+         */
         return __openat_hook(AT_FDCWD, path, flags, mode);
+}
+
+int __creat_hook(const char *path, mode_t mode)
+{
+        /**
+         * creat(path, mode) is equivalent to
+         * open(path, O_CREAT | O_TRUNC, O_WRONLY, mode) =
+         * openat(AT_FDCWD, path, O_CREAT | O_TRUNC | O_WRONLY, mode)
+         */
+        return __openat_hook(AT_FDCWD, path, O_CREAT |
+                             O_TRUNC | O_WRONLY, mode);
 }
 
 int __close_hook(int fd)
@@ -189,27 +290,70 @@ int __close_hook(int fd)
         int retval;
 
         if ((retval = close(fd)) != -1)
-                (void)filelist_close(fd);
+                fd_table_close(fd);
+
+        return retval;
+}
+
+int __dup_hook(int oldfd)
+{
+        int newfd;
+
+        if ((newfd = dup(oldfd)) != -1)
+                fd_table_dup(oldfd, newfd);
+
+        return newfd;
+}
+
+int __dup2_hook(int oldfd, int newfd)
+{
+        int retval;
+
+        if ((retval = dup2(oldfd, newfd)) != -1) {
+                assert(retval == newfd);
+                fd_table_dup(oldfd, newfd);
+        }
+
+        return retval;
+}
+
+int __fcntl_hook(int fd, int cmd, ...)
+{
+        int     retval;
+        va_list va;
+        void    *arg = NULL;
         
-        return retval;
-}
-
-int __dup_hook(int fd)
-{
-        int retval;
-
-        if ((retval = dup(fd)) != -1)
-                assert(filelist_dup(fd, retval) != -1);
+        va_start(va, cmd);
+        arg = va_arg(va, void *);
+        va_end(va);
+        
+        if ((retval = fcntl(fd, cmd, arg)) != -1 &&
+            (cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC))
+                fd_table_dup(fd, retval);
 
         return retval;
 }
 
-int __dup2_hook(int old, int new)
+FILE *__fopen_hook(const char *path, const char *mode)
 {
-        int retval;
+        FILE    *stream;
+        int     flags;
 
-        if ((retval = dup2(old, new)) != -1)
-                assert(filelist_dup(old, new) != -1);
+        if ((stream = fopen(path, mode)) != NULL) {
+                flags = mode_to_oflag(mode);
+                fd_table_open(fileno(stream), path, flags, 0666);
+        }
+
+        return stream;
+}
+
+int __fclose_hook(FILE *stream)
+{
+        int retval, fd;
+        
+        fd = fileno(stream);
+        if ((retval = fclose(stream)) != EOF)
+                fd_table_close(fd);
 
         return retval;
 }
