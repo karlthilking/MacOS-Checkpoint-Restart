@@ -14,6 +14,7 @@
 #include "pac.h"
 #include "pthread_wrappers.h"
 #include "file_wrappers.h"
+#include "signal_wrappers.h"
 
 extern uintptr_t __stack_chk_guard;
 
@@ -22,6 +23,7 @@ void precheckpoint(void)
 #if defined(__arm64e__)
         __pthread_cookie();
 #endif
+        sig_state_save();
         fd_table_save_state();
 }
 
@@ -31,7 +33,7 @@ void postrestart(void)
 #if defined(__arm64e__)
         __pthread_slot_fixup();
 #endif
-        setup();
+        sig_state_restore();
         fd_table_restore_state();
 }
 
