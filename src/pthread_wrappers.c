@@ -41,10 +41,11 @@ int __pthread_join_hook(pthread_t thread, void **value_ptr)
         struct timespec         ts;
         struct thread_info      *th;
 
+again:
         if ((th = thread_list_find(thread)) == NULL) {
-                if ((err = pthread_kill(thread, 0)) == ESRCH)
-                        return err;
-                return pthread_join(thread, value_ptr);
+                if ((err = pthread_kill(thread, 0)) != 0)
+                        return (err == ESRCH) ? ESRCH : EINVAL;
+                goto again;
         }
         
         pthread_mutex_lock(&th->lock);

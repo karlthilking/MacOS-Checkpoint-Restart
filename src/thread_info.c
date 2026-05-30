@@ -91,16 +91,18 @@ void thread_list_release(void)
 
 struct thread_info *thread_list_find(pthread_t thread)
 {
-        struct thread_info *th;
+        struct thread_info *th, *ret = NULL;
         
         thread_list_acquire();
         for (th = thread_list.head; th; th = th->next) {
-                if (pthread_equal(th->self, thread))
-                        return th;
+                if (pthread_equal(th->self, thread)) {
+                        ret = th;
+                        break;
+                }
         }
-        thread_list_release();
 
-        return NULL;
+        thread_list_release();
+        return ret;
 }
 
 /**
